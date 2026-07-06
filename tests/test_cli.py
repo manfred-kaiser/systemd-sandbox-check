@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from systemd_sandbox_check.cli import build_systemd_run_cmd, parse_unit
+from systemd_sandbox_check.cli import (
+    build_exec_check_cmd,
+    build_systemd_run_cmd,
+    parse_exec_start,
+    parse_unit,
+)
 
 UNIT_CONTENT = """\
 [Unit]
@@ -48,3 +53,36 @@ def test_build_systemd_run_cmd_skips_execstart_and_forwards_properties() -> None
     assert "--setenv=HARDEN_CONFIG={}" in cmd
     assert cmd[-2:] == ["/usr/bin/python3", "-"]
     assert "--unit=test-unit" in cmd
+
+
+def test_parse_exec_start_splits_prefix_and_argv() -> None:
+    prefixes, argv = parse_exec_start("-/usr/bin/example --config /etc/example.toml")
+
+    assert prefixes == "-"
+    assert argv == ["/usr/bin/example", "--config", "/etc/example.toml"]
+
+
+def test_parse_exec_start_no_prefix() -> None:
+    prefixes, argv = parse_exec_start("/usr/bin/example")
+
+    assert prefixes == ""
+    assert argv == ["/usr/bin/example"]
+
+
+def test_build_exec_check_cmd_forwards_state_directory_and_forces_no_restart() -> None:
+    directives = {
+        "ExecStart": "/usr/bin/example",
+        "Restart": "on-failure",
+        "RestartSec": "2s",
+        "StateDirectory": "example",
+        "NoNewPrivileges": "true",
+    }
+
+    cmd = build_exec_check_cmd("test-unit-exec", directives, ["/usr/bin/example", "--config", "x.toml"])
+
+    assert "--property=ExecStart=/usr/bin/example" not in cmd
+    assert "--property=Restart=on-failure" not in cmd
+    assert "--property=StateDirectory=example" in cmd
+    assert "--property=NoNewPrivileges=true" in cmd
+    assert "--property=Restart=no" in cmd
+    assert cmd[-3:] == ["/usr/bin/example", "--config", "x.toml"]

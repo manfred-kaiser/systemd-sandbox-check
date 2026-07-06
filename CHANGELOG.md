@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--exec-check` (with `--exec-check-timeout`, default 5s): starts the
+  unit's real `ExecStart` inside the identical sandbox and reports via
+  `systemctl`/`journalctl` whether the application itself comes up and
+  stays up, instead of only checking individual restrictions in isolation.
+  Not a no-op like the other probes -- has real side effects (production
+  paths/network bindings) and is therefore opt-in.
+
 ## [0.1.0] - 2026-07-06
 
 ### Added
