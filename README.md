@@ -19,6 +19,11 @@ properties, runs a battery of probes inside it, and reports directive by
 directive whether each restriction holds and whether the application still
 works under it.
 
+> A unit with `NoExecPaths=/tmp` and `RestrictNamespaces=true` under
+> `RootDirectory=` looks locked down. It isn't: `/tmp` stays executable,
+> and `systemd-analyze security` never notices — see
+> [Example](#example-a-restriction-that-looks-enforced-but-isnt) below.
+
 ## Quick Start
 
 ### 1. Build
@@ -96,40 +101,15 @@ Runs static checks against the matching `[Socket]` section
 
 ## What it checks
 
-| Directive | Probe |
-|---|---|
-| `NoNewPrivileges` | reads the `NoNewPrivs` flag from `/proc/self/status` |
-| `ProtectSystem` | tries to create a file under `/usr` |
-| `ReadWritePaths` | positive control: confirms the path is still writable |
-| `BindReadOnlyPaths` | confirms the bind-mounted path is readable but not writable |
-| `BindPaths` | positive control: confirms the bind-mounted path is still writable |
-| `ProtectHome` | tries to list `/root` |
-| `PrivateTmp` | checks `/tmp`'s mount source for a `systemd-private-*` path |
-| `PrivateDevices` | checks `/dev/sda` is gone, `/dev/null` still works |
-| `ProtectKernelTunables` | tries to open `/proc/sys/vm/swappiness` for writing |
-| `ProtectKernelModules` | checks `CAP_SYS_MODULE` is absent from the capability bounding set |
-| `ProtectKernelLogs` | tries to open `/dev/kmsg` |
-| `ProtectControlGroups` | tries to create a file under `/sys/fs/cgroup` |
-| `ProtectClock` | checks `CAP_SYS_TIME`/`CAP_WAKE_ALARM` are absent |
-| `ProtectHostname` | compares the UTS namespace inode against the host's |
-| `ProtectProc` | tries to list `/proc/1` |
-| `RestrictNamespaces` | tries `unshare(CLONE_NEWNS)` |
-| `RestrictRealtime` | tries to switch to `SCHED_FIFO` |
-| `RestrictSUIDSGID` | tries to `chmod +s` a temp file |
-| `RestrictAddressFamilies` | tries an `AF_NETLINK` socket; confirms `AF_INET` still works |
-| `LockPersonality` | tries to change the process personality |
-| `MemoryDenyWriteExecute` | tries an anonymous RWX `mmap` |
-| `CapabilityBoundingSet` / `AmbientCapabilities` | decodes the capability bitmask; confirms a granted capability (e.g. binding a privileged port) still works |
-| `UMask` | checks the mode of a freshly created file |
-| `PrivateUsers` | checks `/proc/self/uid_map` for a non-identity mapping |
-| `ProcSubset` | tries to list `/proc/1` vs. only `/proc/self` |
-| `RootDirectory` / `RootImage` | confirms the process's `/` differs from the host's |
-| `NoExecPaths` / `ExecPaths` | copies the probe binary to a non-allowlisted path and confirms it refuses to execute |
-| `OOMScoreAdjust` | reads `/proc/self/oom_score_adj` |
-| `MemoryMax` / `MemoryHigh` | reads back the effective cgroup v2 `memory.max`/`memory.high` |
-| `TasksMax` | reads back the effective cgroup v2 `pids.max` |
-| `LimitNOFILE` | reads back the process's `RLIMIT_NOFILE` via `getrlimit()` |
-| `CPUWeight` / `IOWeight` | reads back the effective cgroup v2 `cpu.weight`/`io.weight` |
+| Category | Directives | How it's probed |
+|---|---|---|
+| Namespace & root isolation | `PrivateUsers`, `ProcSubset`, `ProtectHostname`, `RestrictNamespaces`, `RootDirectory`/`RootImage` | confirms UID mapping, `/proc` visibility, the UTS namespace, and the process root actually differ from the host; confirms `unshare(CLONE_NEWNS)` is blocked |
+| Filesystem write protection | `ProtectSystem`, `ProtectHome`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectProc` | tries to write under `/usr`, list `/root`/`/proc/1`, write a kernel tunable, open `/dev/kmsg`, write under `/sys/fs/cgroup`; checks `CAP_SYS_MODULE` |
+| Path allow/denylists | `ReadWritePaths`, `BindReadOnlyPaths`, `BindPaths`, `NoExecPaths`/`ExecPaths` | confirms each declared path is writable/read-only/executable exactly as configured, with positive controls for paths that should stay writable |
+| Privilege & capability restriction | `NoNewPrivileges`, `CapabilityBoundingSet`, `AmbientCapabilities`, `RestrictSUIDSGID`, `LockPersonality`, `ProtectClock` | reads `NoNewPrivs`/the capability bitmask directly; tries `chmod +s` and a `personality()` change |
+| Network & execution restriction | `RestrictAddressFamilies`, `MemoryDenyWriteExecute`, `RestrictRealtime` | tries a blocked address family (plus an `AF_INET` positive control), an anonymous RWX `mmap`, and `SCHED_FIFO` |
+| Resource control readback | `OOMScoreAdjust`, `MemoryMax`/`MemoryHigh`, `TasksMax`, `LimitNOFILE`, `CPUWeight`/`IOWeight` | reads back the effective cgroup v2 / `getrlimit()` values |
+| `PrivateTmp`, `PrivateDevices`, `UMask` | — | checks `/tmp`'s mount source, that `/dev/sda` is gone but `/dev/null` works, and the mode of a freshly created file |
 
 Positive controls (`ReadWritePaths`, `BindPaths`, `AF_INET`) run alongside
 the negative ones, so an over-restrictive configuration is reported the
