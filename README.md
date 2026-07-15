@@ -12,32 +12,26 @@
 
 ---
 
-## Why
+## What it does
 
-Individual hardening directives are enforced by systemd/the kernel — that
-part can be trusted. The actual open question when you lock a unit down this
-hard is: **does the application still work, or did you just make the
-sandbox too restrictive for it?** A typo, a wrong path in `ReadWritePaths`,
-or a directive that quietly needs something the app does at startup can
-break the service in ways `systemd-analyze security` — which only checks
-which directives are *present* — has no way to catch.
+`systemd-analyze security <unit>` checks which hardening directives are
+*present* in a unit file. It does not check whether they are actually
+enforced at runtime, or whether the application still works under them.
 
-`systemd-sandbox-check` takes a unit file and starts a **transient unit with
-the exact same `[Service]` hardening properties** to answer that question
-two ways:
+`systemd-sandbox-check` takes a unit file, starts a transient unit with the
+same `[Service]` properties via `systemd-run`, and runs a battery of probes
+inside it. Each probe targets one directive and reports whether the
+restriction is observed to be in effect, and — where applicable — whether
+a corresponding positive control (a path the unit is supposed to still be
+able to write to, a capability it is supposed to retain) still works.
 
-- A battery of small, safe probes reports, directive by directive, whether
-  the restriction is actually wired up and whether things the app needs
-  (a writable state directory, outbound sockets, ...) still work.
-- `--exec-check` goes further and starts the unit's *real* `ExecStart`
-  inside that identical sandbox, to directly confirm the application itself
-  comes up and stays up under it — not just that the individual restrictions
-  behave as expected in isolation.
+`--exec-check` extends this by running the unit's actual `ExecStart`
+command inside the same transient sandbox and reporting via
+`systemctl`/`journalctl` whether it reaches a running state.
 
 ## Installation
 
-A single self-contained, statically linked binary — no interpreter, no
-dependencies.
+Single statically linked binary, no runtime dependencies.
 
 ```
 cd c
@@ -46,19 +40,17 @@ sudo cp systemd-sandbox-check /usr/local/bin/
 ```
 
 Requires `gcc` and glibc's static-linking support (`glibc-devel-static` on
-openSUSE/RHEL, `libc6-dev` normally suffices on Debian/Ubuntu).
+openSUSE/RHEL, `libc6-dev` on Debian/Ubuntu).
 
-**Do not install it under a directory affected by the target unit's
-`ProtectHome=`** (e.g. anywhere under `/home`). The orchestrator bind-mounts
-its own binary into the transient sandbox so it can re-exec itself there;
-if the target unit's hardening also hides the binary's own path, that bind
-mount fails and the run errors out with `status=203/EXEC`. `/usr/local/bin`
-is a safe, unaffected location for any normal hardening configuration.
+Install it outside any directory covered by a target unit's `ProtectHome=`
+(e.g. not under `/home`). The orchestrator bind-mounts its own binary path
+into the transient sandbox to re-exec itself there; if `ProtectHome=` also
+hides that path, the bind mount fails and `systemd-run` exits with
+`status=203/EXEC`. `/usr/local/bin` is unaffected by `ProtectHome=`.
 
-The tool detects this combination itself at startup — if it's running from
+The tool checks this condition itself at startup: if it is running from
 under `/home` and the target unit sets `ProtectHome=true`/`read-only`/
-`tmpfs`, it aborts immediately with an explanatory error instead of letting
-`systemd-run` fail with an opaque `status=203/EXEC`.
+`tmpfs`, it exits with an error before invoking `systemd-run`.
 
 ## Usage
 
@@ -66,9 +58,9 @@ under `/home` and the target unit sets `ProtectHome=true`/`read-only`/
 sudo systemd-sandbox-check --unit /path/to/some.service
 ```
 
-Requires root, because creating a system-scope transient unit via
-`systemd-run` requires privileges. Add `--dry-run` to print the
-`systemd-run` command that would be executed, without running anything.
+Requires root: creating a system-scope transient unit via `systemd-run`
+requires privileges. `--dry-run` prints the `systemd-run` command that
+would be executed, without running anything.
 
 Example output:
 
@@ -89,42 +81,40 @@ Summary: 19 PASS, 1 FAIL, 0 WARN, 3 INFO
 Exit code is non-zero if any check reports `FAIL`, so it can be used as a
 CI gate.
 
-### `--exec-check`: does the application itself still come up?
+### `--exec-check`
 
 ```
 sudo systemd-sandbox-check --unit /path/to/some.service --exec-check
 ```
 
-This additionally starts the unit's real `ExecStart` command inside the
-identical sandbox and watches it for `--exec-check-timeout` seconds
-(default: 5) via `systemctl show`/`journalctl`, reporting whether it reached
-a running state or failed — the direct answer to "does my application still
-work under this hardening, or is it too restrictive."
+Starts the unit's `ExecStart` command inside the transient sandbox and
+polls `systemctl show` for `--exec-check-timeout` seconds (default: 5),
+reporting whether the unit reached `active` or `failed`.
 
-**This is not a no-op** like the other probes — it runs the real
-application binary with production-like paths and network bindings. If an
-instance of the same service is already running, expect conflicts (e.g. the
-port is already bound); stop the real service first if you want a clean
-result. `ExecStart=` lines prefixed with `+`/`!`/`!!` (which escape or alter
-the sandbox — see `systemd.service(5)`) are skipped with a warning instead
-of silently running unsandboxed.
+Unlike the other probes, this runs the actual application binary with its
+configured paths and network bindings, not a self-contained no-op. If an
+instance of the same service is already running, this can conflict with it
+(e.g. a port already bound); stop the real service first for a clean
+result. `ExecStart=` lines prefixed with `+`/`!`/`!!` (which alter or
+escape the sandbox — see `systemd.service(5)`) are skipped with a warning
+rather than run outside the sandbox.
 
-### `--socket-unit`: check the matching `.socket` unit too
+### `--socket-unit`
 
 ```
 sudo systemd-sandbox-check --unit /path/to/some.service --socket-unit /path/to/some.socket
 ```
 
-Runs a set of static lint checks against the `[Socket]` section
-(`TriggerLimitIntervalSec=`/`TriggerLimitBurst=` present, `Accept=`/
-`MaxConnections=` sanity, `KeepAlive*=` consistency) alongside the dynamic
-`[Service]` probe battery.
+Runs static checks against the `[Socket]` section
+(`TriggerLimitIntervalSec=`/`TriggerLimitBurst=` presence, `Accept=`/
+`MaxConnections=` combinations, `KeepAlive*=` consistency) in addition to
+the `[Service]` probe battery.
 
 ## What it checks
 
 For each of these directives found in the unit's `[Service]` section, a
-targeted probe runs inside the transient unit and reports `PASS` / `FAIL` /
-`WARN` / `INFO`:
+probe runs inside the transient unit and reports `PASS` / `FAIL` / `WARN` /
+`INFO`:
 
 | Directive | Probe |
 |---|---|
@@ -161,64 +151,62 @@ targeted probe runs inside the transient unit and reports `PASS` / `FAIL` /
 | `LimitNOFILE` | reads back the process's `RLIMIT_NOFILE` via `getrlimit()` |
 | `CPUWeight` / `IOWeight` | reads back the effective cgroup v2 `cpu.weight`/`io.weight` |
 
-Positive controls are included where relevant (`ReadWritePaths`, `BindPaths`,
-`AF_INET`) so the tool also flags over-restrictive configurations, not just
-missing ones.
+Positive controls (`ReadWritePaths`, `BindPaths`, `AF_INET`) are included
+alongside the negative ones, so an over-restrictive configuration is
+reported the same way a missing restriction is.
 
-Additionally, two **static** lint checks run without starting anything:
+Two static checks run without starting a transient unit:
 
 - The `"+"` path-prefix convention for `ReadWritePaths=`/`ReadOnlyPaths=`/
   `InaccessiblePaths=`/`ExecPaths=`/`NoExecPaths=` under `RootDirectory=`/
   `RootImage=` (see [systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)):
-  flags a bare (non-`+`-prefixed) path under those directives when
-  `RootDirectory=`/`RootImage=` is also set, since it silently resolves
-  relative to the *host* root instead of the chroot.
-- `[Socket]` section sanity (with `--socket-unit`): missing
-  `TriggerLimitIntervalSec=`/`TriggerLimitBurst=`, `Accept=`/
-  `MaxConnections=` combinations, `KeepAlive*=` consistency.
+  a bare (non-`+`-prefixed) path under those directives resolves relative
+  to the host root instead of the chroot when `RootDirectory=`/
+  `RootImage=` is also set; this is flagged.
+- `[Socket]` section checks (with `--socket-unit`), listed under
+  `--socket-unit` above.
 
 ## Limitations
 
-`SystemCallFilter` / `SystemCallArchitectures` (seccomp) are intentionally
-**not** exercised live — doing so safely would require invoking syscalls
-(reboot, mount, module load, ...) that risk real side effects if a filter
-turns out not to be enforced. These are reported as configured-but-not-probed;
-cross-check them with `systemd-analyze security <unit>` instead.
+`SystemCallFilter` / `SystemCallArchitectures` (seccomp) are not exercised
+live. Doing so would require invoking syscalls (reboot, mount, module load,
+...) that have real side effects if the filter turns out not to be
+enforced. These are reported as configured-but-not-probed; cross-check
+them with `systemd-analyze security <unit>`.
 
 ## Safety
 
-Every probe in the default run is chosen to be a no-op (or self-contained to
-the ephemeral sandboxed process) even if the restriction it's testing turns
-out *not* to be enforced — no probe can reboot, remount, change the system
-clock, or load a kernel module for real. Capability-gated actions like that
-are checked indirectly by reading the process's capability bitmask instead
-of exercising them.
+Every probe in the default run is either a no-op or self-contained to the
+transient sandboxed process, regardless of whether the restriction it
+tests turns out to be enforced: no probe reboots, remounts, changes the
+system clock, or loads a kernel module. Capability-gated actions of that
+kind are checked by reading the process's capability bitmask instead of
+performing them.
 
-`--exec-check` is the one deliberate exception: it's opt-in precisely
-because it runs the real application, with real side effects. See the
-`--exec-check` section above.
+`--exec-check` is the exception: it runs the unit's actual `ExecStart`, so
+it can have the same side effects the unit itself would have (see
+`--exec-check` above).
 
 ## How it works
 
-A single static binary plays two roles, dispatched via an internal-only CLI
-flag never exposed to users:
+One static binary has two modes, dispatched via an internal-only CLI flag:
 
 - **Orchestrator** (default): parses the target unit file, starts a
-  transient unit via `systemd-run` with the identical `[Service]`
-  properties, then re-execs *itself* inside that transient unit to run the
-  probe battery, and collects/prints the results.
-- **Probe** (`--ssc-probe-internal`, internal only): runs the actual checks,
+  transient unit via `systemd-run` with the same `[Service]` properties,
+  re-execs itself inside that transient unit to run the probe battery, and
+  collects and prints the results.
+- **Probe** (`--ssc-probe-internal`, not user-facing): runs the checks,
   reading its configuration from environment variables set by the
   orchestrator.
 
-The probe process runs *inside* the transient unit, which inherits the
-target unit's own `NoExecPaths=`/`ExecPaths=` allowlist — so a general
-interpreter (`python3`, ...) might simply not be executable there (this is
-exactly what happens against a unit that only allows its own bundled
-interpreter to run). Self-reexec sidesteps the problem entirely: the
+The probe process runs inside the transient unit, and therefore inherits
+the target unit's own `NoExecPaths=`/`ExecPaths=` allowlist. A general
+interpreter (e.g. `python3`) is not guaranteed to be executable there — for
+example, a unit that only allows its own bundled interpreter to run would
+block a system Python. Self-reexec avoids this dependency: the
 orchestrator adds its own binary's path to the transient unit's
-`ExecPaths=`/`BindReadOnlyPaths=`, so the probe never depends on anything
-the target unit happens to allow.
+`ExecPaths=`/`BindReadOnlyPaths=`, so the probe process only depends on a
+path the orchestrator controls.
 
 ## License
 
