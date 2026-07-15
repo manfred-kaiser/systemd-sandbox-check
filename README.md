@@ -14,9 +14,13 @@
 
 ## Example
 
+`NoExecPaths=/tmp` looks like it makes `PrivateTmp=true`'s private `/tmp`
+non-executable. Under one specific combination of directives, it silently
+does not — and `systemd-analyze security` has no way to catch it, since it
+only checks that `NoExecPaths=` is present, not what it actually covers.
+
 [`examples/privatetmp-noexecpaths-bug.service`](examples/privatetmp-noexecpaths-bug.service)
-is a minimal unit where `NoExecPaths=/tmp` looks like it makes
-`PrivateTmp=true`'s private `/tmp` non-executable, but does not:
+reproduces it:
 
 ```
 sudo systemd-sandbox-check --unit examples/privatetmp-noexecpaths-bug.service
@@ -33,12 +37,9 @@ entirely. The fix is the same either way — prefix the path with `+`:
 `NoExecPaths=+/tmp` (see `systemd.exec(5)` and
 [systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
 
-`systemd-analyze security <unit>` reports `NoExecPaths=` as present and
-scores the unit accordingly; it has no way to detect that the restriction
-does not apply to the path it is meant to cover. This gap is what
-`systemd-sandbox-check` was written for: it starts a transient unit with
-the same properties and tests directly whether `/tmp` is actually
-non-executable, instead of only checking that the directive is set.
+This is the kind of gap `systemd-sandbox-check` exists for: it starts a
+transient unit with the target's properties and tests directly whether a
+restriction holds, instead of only checking that the directive is set.
 
 ## What it does
 
