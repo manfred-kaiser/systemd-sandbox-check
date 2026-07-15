@@ -12,17 +12,17 @@
 
 ---
 
+**A unit with `NoExecPaths=/tmp` and `RestrictNamespaces=true` under
+`RootDirectory=` looks locked down. It isn't** — `/tmp` stays executable,
+and `systemd-analyze security` never notices (see
+[Example](#example-a-restriction-that-looks-enforced-but-isnt) below).
+
 `systemd-analyze security <unit>` checks which hardening directives are
 *present* in a unit file. `systemd-sandbox-check` checks whether they are
 actually *enforced*: it starts a transient unit with the same `[Service]`
 properties, runs a battery of probes inside it, and reports directive by
 directive whether each restriction holds and whether the application still
 works under it.
-
-> A unit with `NoExecPaths=/tmp` and `RestrictNamespaces=true` under
-> `RootDirectory=` looks locked down. It isn't: `/tmp` stays executable,
-> and `systemd-analyze security` never notices — see
-> [Example](#example-a-restriction-that-looks-enforced-but-isnt) below.
 
 ## Quick Start
 
