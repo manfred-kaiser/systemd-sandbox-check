@@ -12,6 +12,25 @@
 
 ---
 
+## Example
+
+A unit with `PrivateTmp=true`, `RootDirectory=/some/chroot`, and
+`NoExecPaths=/tmp` looks like it makes `/tmp` non-executable inside the
+chroot. It does not: `NoExecPaths=` (like `ReadWritePaths=`,
+`ReadOnlyPaths=`, `InaccessiblePaths=`, `ExecPaths=`) resolves a bare path
+against the host's root, not against `RootDirectory=`, when both are set
+([systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
+The chroot's own `/tmp` — where `PrivateTmp=` actually mounts the private
+tmpfs — is left executable. The fix is to prefix the path with `+`:
+`NoExecPaths=+/tmp`.
+
+`systemd-analyze security <unit>` reports `NoExecPaths=` as present and
+scores the unit accordingly; it has no way to detect that the restriction
+does not apply to the path it is meant to cover. This gap is what
+`systemd-sandbox-check` was written for: it starts a transient unit with
+the same properties and tests directly whether `/tmp` is actually
+non-executable, instead of only checking that the directive is set.
+
 ## What it does
 
 `systemd-analyze security <unit>` checks which hardening directives are
