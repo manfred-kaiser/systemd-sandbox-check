@@ -1,11 +1,16 @@
 /* Entry point: dispatches between orchestrator mode (default) and the two
  * internal, never-user-facing self-reexec modes. See ssc.h for why this
  * one binary plays both roles. */
+#include <stdio.h>
 #include <string.h>
 
 #include "ssc.h"
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
+        printf("systemd-sandbox-check %s\n", SSC_VERSION);
+        return 0;
+    }
     if (argc >= 2 && strcmp(argv[1], "--ssc-probe-internal") == 0) {
         return run_probe();
     }

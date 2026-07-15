@@ -21,6 +21,8 @@
 #ifndef SSC_H
 #define SSC_H
 
+#define SSC_VERSION "0.1.0"
+
 #include <stddef.h>
 
 /* --- Ordered (key, value) pair list, preserving repeated directives ---

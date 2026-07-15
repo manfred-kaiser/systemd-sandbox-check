@@ -561,7 +561,8 @@ static void run_exec_check(const kv_list_t *pairs, const char *exec_start, doubl
 static void usage(const char *prog) {
     fprintf(stderr,
         "usage: %s --unit PATH [--dry-run] [--exec-check] [--exec-check-timeout SECONDS] "
-        "[--socket-unit PATH]\n", prog);
+        "[--socket-unit PATH]\n"
+        "       %s --version\n", prog, prog);
 }
 
 int run_cli(int argc, char **argv) {

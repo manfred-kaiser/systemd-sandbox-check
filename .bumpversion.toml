@@ -1,0 +1,23 @@
+[tool.bumpversion]
+current_version = "0.1.0"
+commit = false
+tag = false
+tag_name = "{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "src/ssc.h"
+search = 'SSC_VERSION "{current_version}"'
+replace = 'SSC_VERSION "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "CHANGELOG.md"
+search = "[Unreleased]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/{current_version}...main"
+replace = """[Unreleased]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/{new_version}...main
+[{new_version}]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/{current_version}...{new_version}"""
+
+[[tool.bumpversion.files]]
+filename = "CHANGELOG.md"
+search = "## [Unreleased]"
+replace = """## [Unreleased]
+
+## [{new_version}] - {now:%Y-%m-%d}"""
