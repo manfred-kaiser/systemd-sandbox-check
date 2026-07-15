@@ -34,7 +34,7 @@ command inside the same transient sandbox and reporting via
 Single statically linked binary, no runtime dependencies.
 
 ```
-cd c
+cd src
 make
 sudo cp systemd-sandbox-check /usr/local/bin/
 ```

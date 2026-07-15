@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verified check-by-check (39 checks, identical PASS/FAIL/WARN/INFO output)
   before the Python source was deleted.
 - `pip install systemd-sandbox-check` / `pyproject.toml` / the PyPI publish
-  workflow no longer apply; build from source with `make -C c` instead.
+  workflow no longer apply; build from source with `make -C src` instead.
 
 ### Added
 
