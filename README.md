@@ -14,15 +14,24 @@
 
 ## Example
 
-A unit with `PrivateTmp=true`, `RootDirectory=/some/chroot`, and
-`NoExecPaths=/tmp` looks like it makes `/tmp` non-executable inside the
-chroot. It does not: `NoExecPaths=` (like `ReadWritePaths=`,
-`ReadOnlyPaths=`, `InaccessiblePaths=`, `ExecPaths=`) resolves a bare path
-against the host's root, not against `RootDirectory=`, when both are set
-([systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
-The chroot's own `/tmp` — where `PrivateTmp=` actually mounts the private
-tmpfs — is left executable. The fix is to prefix the path with `+`:
-`NoExecPaths=+/tmp`.
+[`examples/privatetmp-noexecpaths-bug.service`](examples/privatetmp-noexecpaths-bug.service)
+is a minimal unit where `NoExecPaths=/tmp` looks like it makes
+`PrivateTmp=true`'s private `/tmp` non-executable, but does not:
+
+```
+sudo systemd-sandbox-check --unit examples/privatetmp-noexecpaths-bug.service
+# [FAIL] no_exec_paths (NoExecPaths): copy of interpreter outside ExecPaths= EXECUTED -- allowlist not enforced
+```
+
+Confirmed by testing (isolating each directive one at a time): the unit
+needs `RestrictNamespaces=` set alongside `RootDirectory=` for this to
+happen — `RootDirectory=` with a bare `NoExecPaths=/tmp` and no
+`RestrictNamespaces=` correctly blocks execution. With both present, a bare
+path in `NoExecPaths=`/`ExecPaths=`/etc. resolves against the host's root
+instead of `RootDirectory=`, missing the chroot's own private `/tmp` mount
+entirely. The fix is the same either way — prefix the path with `+`:
+`NoExecPaths=+/tmp` (see `systemd.exec(5)` and
+[systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
 
 `systemd-analyze security <unit>` reports `NoExecPaths=` as present and
 scores the unit accordingly; it has no way to detect that the restriction

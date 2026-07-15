@@ -1,0 +1,27 @@
+# Minimal reproduction of a NoExecPaths= misconfiguration that
+# systemd-analyze security cannot detect: NoExecPaths=/tmp below looks
+# like it makes PrivateTmp=true's private /tmp non-executable. It does
+# not, because RestrictNamespaces= is also set here.
+#
+# Confirmed by testing (isolating each directive one at a time):
+# RootDirectory= with a bare NoExecPaths=/tmp and no RestrictNamespaces=
+# correctly blocks execution in /tmp. Adding RestrictNamespaces= on top
+# is what makes the bare path resolve against the host's root instead of
+# RootDirectory=, silently missing the chroot's own private /tmp mount.
+#
+# Reproduce:
+#   sudo systemd-sandbox-check --unit privatetmp-noexecpaths-bug.service
+#   -> [FAIL] no_exec_paths (NoExecPaths): ... EXECUTED -- allowlist not enforced
+#
+# Fix: change NoExecPaths=/tmp to NoExecPaths=+/tmp and re-run:
+#   -> [PASS] no_exec_paths (NoExecPaths): ... refused to execute
+#
+# See systemd.exec(5) and https://github.com/systemd/systemd/issues/39935
+
+[Service]
+ExecStart=/usr/bin/sleep infinity
+PrivateTmp=true
+RestrictNamespaces=true
+NoExecPaths=/tmp
+RuntimeDirectory=privatetmp-noexecpaths-bug
+RootDirectory=/run/privatetmp-noexecpaths-bug
