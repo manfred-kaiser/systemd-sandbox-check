@@ -609,6 +609,25 @@ int run_cli(int argc, char **argv) {
     char self_path[4096];
     resolve_self_path(self_path, sizeof(self_path));
 
+    if (strncmp(self_path, "/home/", 6) == 0) {
+        char *protect_home = kv_merge(&pairs, "ProtectHome");
+        int home_hidden = protect_home && (strcasecmp(protect_home, "true") == 0 ||
+                                            strcasecmp(protect_home, "read-only") == 0 ||
+                                            strcasecmp(protect_home, "tmpfs") == 0);
+        free(protect_home);
+        if (home_hidden) {
+            fprintf(stderr,
+                "error: this binary is installed under /home (%s), but %s sets "
+                "ProtectHome=; binding it into the transient sandbox would fail "
+                "(systemd-run: status=203/EXEC, \"No such file or directory\") since "
+                "ProtectHome= hides its own path there. Install it under /usr/local/bin "
+                "(or anywhere outside /home) instead. Aborting.\n",
+                self_path, unit_path);
+            kv_list_free(&pairs);
+            return 1;
+        }
+    }
+
     char unit_name[128];
     snprintf(unit_name, sizeof(unit_name), "sandbox-check-%d", getpid());
     strvec_t cmd = build_systemd_run_argv(unit_name, &pairs, self_path);

@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ReadWritePaths=`/`ReadOnlyPaths=`/`InaccessiblePaths=`/`ExecPaths=`/
   `NoExecPaths=` under `RootDirectory=`/`RootImage=`
   ([systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
+- A startup guard: if the binary is running from under `/home` and the
+  target unit sets `ProtectHome=true`/`read-only`/`tmpfs`, abort immediately
+  with an explanatory error instead of letting `systemd-run` fail later with
+  an opaque `status=203/EXEC`.
 
 ## [0.1.0] - 2026-07-06
 

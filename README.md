@@ -55,6 +55,11 @@ if the target unit's hardening also hides the binary's own path, that bind
 mount fails and the run errors out with `status=203/EXEC`. `/usr/local/bin`
 is a safe, unaffected location for any normal hardening configuration.
 
+The tool detects this combination itself at startup — if it's running from
+under `/home` and the target unit sets `ProtectHome=true`/`read-only`/
+`tmpfs`, it aborts immediately with an explanatory error instead of letting
+`systemd-run` fail with an opaque `status=203/EXEC`.
+
 ## Usage
 
 ```
