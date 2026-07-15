@@ -1,68 +1,31 @@
-# systemd-sandbox-check
-
-<p align="center">
-  <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/blob/main/LICENSE"><img src="https://img.shields.io/github/license/manfred-kaiser/systemd-sandbox-check" alt="License"></a>
-  <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml"><img src="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml/badge.svg" alt="Build status"></a>
-</p>
+<h1 align="center">systemd-sandbox-check</h1>
 
 <p align="center">
   <strong>Runtime verification for systemd sandboxing/hardening directives on
   a unit file.</strong>
 </p>
 
+<p align="center">
+  <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/blob/main/LICENSE"><img src="https://img.shields.io/github/license/manfred-kaiser/systemd-sandbox-check" alt="License"></a>
+  <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml"><img src="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml/badge.svg" alt="Build status"></a>
+</p>
+
 ---
 
-## Example
-
-`NoExecPaths=/tmp` looks like it makes `PrivateTmp=true`'s private `/tmp`
-non-executable. Under one specific combination of directives, it silently
-does not — and `systemd-analyze security` has no way to catch it, since it
-only checks that `NoExecPaths=` is present, not what it actually covers.
-
-[`examples/privatetmp-noexecpaths-bug.service`](examples/privatetmp-noexecpaths-bug.service)
-reproduces it:
-
-```
-sudo systemd-sandbox-check --unit examples/privatetmp-noexecpaths-bug.service
-# [FAIL] no_exec_paths (NoExecPaths): copy of interpreter outside ExecPaths= EXECUTED -- allowlist not enforced
-```
-
-Confirmed by testing (isolating each directive one at a time): the unit
-needs `RestrictNamespaces=` set alongside `RootDirectory=` for this to
-happen — `RootDirectory=` with a bare `NoExecPaths=/tmp` and no
-`RestrictNamespaces=` correctly blocks execution. With both present, a bare
-path in `NoExecPaths=`/`ExecPaths=`/etc. resolves against the host's root
-instead of `RootDirectory=`, missing the chroot's own private `/tmp` mount
-entirely. The fix is the same either way — prefix the path with `+`:
-`NoExecPaths=+/tmp` (see `systemd.exec(5)` and
-[systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
-
-This is the kind of gap `systemd-sandbox-check` exists for: it starts a
-transient unit with the target's properties and tests directly whether a
-restriction holds, instead of only checking that the directive is set.
-
-## What it does
-
 `systemd-analyze security <unit>` checks which hardening directives are
-*present* in a unit file. It does not check whether they are actually
-enforced at runtime, or whether the application still works under them.
+*present* in a unit file. `systemd-sandbox-check` checks whether they are
+actually *enforced*: it starts a transient unit with the same `[Service]`
+properties, runs a battery of probes inside it, and reports directive by
+directive whether each restriction holds and whether the application still
+works under it.
 
-`systemd-sandbox-check` takes a unit file, starts a transient unit with the
-same `[Service]` properties via `systemd-run`, and runs a battery of probes
-inside it. Each probe targets one directive and reports whether the
-restriction is observed to be in effect, and — where applicable — whether
-a corresponding positive control (a path the unit is supposed to still be
-able to write to, a capability it is supposed to retain) still works.
+## Quick Start
 
-`--exec-check` extends this by running the unit's actual `ExecStart`
-command inside the same transient sandbox and reporting via
-`systemctl`/`journalctl` whether it reaches a running state.
-
-## Installation
+### 1. Build
 
 Single statically linked binary, no runtime dependencies.
 
-```
+```sh
 cd src
 make
 sudo cp systemd-sandbox-check /usr/local/bin/
@@ -71,27 +34,23 @@ sudo cp systemd-sandbox-check /usr/local/bin/
 Requires `gcc` and glibc's static-linking support (`glibc-devel-static` on
 openSUSE/RHEL, `libc6-dev` on Debian/Ubuntu).
 
-Install it outside any directory covered by a target unit's `ProtectHome=`
-(e.g. not under `/home`). The orchestrator bind-mounts its own binary path
-into the transient sandbox to re-exec itself there; if `ProtectHome=` also
-hides that path, the bind mount fails and `systemd-run` exits with
-`status=203/EXEC`. `/usr/local/bin` is unaffected by `ProtectHome=`.
+> **Install outside `/home`.**
+> The orchestrator bind-mounts its own binary into the transient sandbox to
+> re-exec itself there. If the binary lives under a directory a target
+> unit's `ProtectHome=` hides, that bind mount fails
+> (`status=203/EXEC`). `/usr/local/bin` is unaffected. The tool also checks
+> this itself at startup and aborts with an explanation rather than letting
+> `systemd-run` fail with an opaque error.
 
-The tool checks this condition itself at startup: if it is running from
-under `/home` and the target unit sets `ProtectHome=true`/`read-only`/
-`tmpfs`, it exits with an error before invoking `systemd-run`.
+### 2. Run
 
-## Usage
-
-```
+```sh
 sudo systemd-sandbox-check --unit /path/to/some.service
 ```
 
 Requires root: creating a system-scope transient unit via `systemd-run`
-requires privileges. `--dry-run` prints the `systemd-run` command that
-would be executed, without running anything.
-
-Example output:
+requires privileges. Add `--dry-run` to print the `systemd-run` command
+without running anything.
 
 ```
 [PASS] protect_system_usr_rw            (ProtectSystem): /usr is not writable
@@ -110,40 +69,32 @@ Summary: 19 PASS, 1 FAIL, 0 WARN, 3 INFO
 Exit code is non-zero if any check reports `FAIL`, so it can be used as a
 CI gate.
 
-### `--exec-check`
+### 3. Optional: `--exec-check` and `--socket-unit`
 
-```
+```sh
 sudo systemd-sandbox-check --unit /path/to/some.service --exec-check
 ```
 
-Starts the unit's `ExecStart` command inside the transient sandbox and
+Starts the unit's real `ExecStart` command inside the transient sandbox and
 polls `systemctl show` for `--exec-check-timeout` seconds (default: 5),
-reporting whether the unit reached `active` or `failed`.
+reporting whether it reached `active` or `failed`. Unlike the other
+probes, this runs the actual application with its configured paths and
+network bindings — if the same service is already running, expect
+conflicts (e.g. a port already bound); stop it first for a clean result.
+`ExecStart=` lines prefixed with `+`/`!`/`!!` (which alter or escape the
+sandbox — see `systemd.service(5)`) are skipped with a warning rather than
+run outside the sandbox.
 
-Unlike the other probes, this runs the actual application binary with its
-configured paths and network bindings, not a self-contained no-op. If an
-instance of the same service is already running, this can conflict with it
-(e.g. a port already bound); stop the real service first for a clean
-result. `ExecStart=` lines prefixed with `+`/`!`/`!!` (which alter or
-escape the sandbox — see `systemd.service(5)`) are skipped with a warning
-rather than run outside the sandbox.
-
-### `--socket-unit`
-
-```
+```sh
 sudo systemd-sandbox-check --unit /path/to/some.service --socket-unit /path/to/some.socket
 ```
 
-Runs static checks against the `[Socket]` section
+Runs static checks against the matching `[Socket]` section
 (`TriggerLimitIntervalSec=`/`TriggerLimitBurst=` presence, `Accept=`/
-`MaxConnections=` combinations, `KeepAlive*=` consistency) in addition to
-the `[Service]` probe battery.
+`MaxConnections=` combinations, `KeepAlive*=` consistency) alongside the
+`[Service]` probe battery.
 
 ## What it checks
-
-For each of these directives found in the unit's `[Service]` section, a
-probe runs inside the transient unit and reports `PASS` / `FAIL` / `WARN` /
-`INFO`:
 
 | Directive | Probe |
 |---|---|
@@ -180,11 +131,11 @@ probe runs inside the transient unit and reports `PASS` / `FAIL` / `WARN` /
 | `LimitNOFILE` | reads back the process's `RLIMIT_NOFILE` via `getrlimit()` |
 | `CPUWeight` / `IOWeight` | reads back the effective cgroup v2 `cpu.weight`/`io.weight` |
 
-Positive controls (`ReadWritePaths`, `BindPaths`, `AF_INET`) are included
-alongside the negative ones, so an over-restrictive configuration is
-reported the same way a missing restriction is.
+Positive controls (`ReadWritePaths`, `BindPaths`, `AF_INET`) run alongside
+the negative ones, so an over-restrictive configuration is reported the
+same way a missing restriction is.
 
-Two static checks run without starting a transient unit:
+Two checks run statically, without starting a transient unit:
 
 - The `"+"` path-prefix convention for `ReadWritePaths=`/`ReadOnlyPaths=`/
   `InaccessiblePaths=`/`ExecPaths=`/`NoExecPaths=` under `RootDirectory=`/
@@ -192,16 +143,37 @@ Two static checks run without starting a transient unit:
   a bare (non-`+`-prefixed) path under those directives resolves relative
   to the host root instead of the chroot when `RootDirectory=`/
   `RootImage=` is also set; this is flagged.
-- `[Socket]` section checks (with `--socket-unit`), listed under
-  `--socket-unit` above.
+- `[Socket]` section checks, with `--socket-unit` (see above).
 
-## Limitations
+`SystemCallFilter`/`SystemCallArchitectures` (seccomp) are reported as
+configured-but-not-probed, not exercised live — doing so would require
+syscalls (reboot, mount, module load, ...) with real side effects if a
+filter turns out not to be enforced. Cross-check them with
+`systemd-analyze security <unit>`.
 
-`SystemCallFilter` / `SystemCallArchitectures` (seccomp) are not exercised
-live. Doing so would require invoking syscalls (reboot, mount, module load,
-...) that have real side effects if the filter turns out not to be
-enforced. These are reported as configured-but-not-probed; cross-check
-them with `systemd-analyze security <unit>`.
+## Example: a restriction that looks enforced but isn't
+
+`NoExecPaths=/tmp` looks like it makes `PrivateTmp=true`'s private `/tmp`
+non-executable. Under one specific combination of directives, it silently
+does not — and `systemd-analyze security` has no way to catch it, since it
+only checks that `NoExecPaths=` is present, not what it actually covers.
+
+[`examples/privatetmp-noexecpaths-bug.service`](examples/privatetmp-noexecpaths-bug.service)
+reproduces it:
+
+```sh
+sudo systemd-sandbox-check --unit examples/privatetmp-noexecpaths-bug.service
+# [FAIL] no_exec_paths (NoExecPaths): copy of interpreter outside ExecPaths= EXECUTED -- allowlist not enforced
+```
+
+Confirmed by testing, isolating each directive one at a time: the unit
+needs `RestrictNamespaces=` set alongside `RootDirectory=` for this to
+happen — `RootDirectory=` with a bare `NoExecPaths=/tmp` and no
+`RestrictNamespaces=` correctly blocks execution. With both present, a bare
+path in `NoExecPaths=`/`ExecPaths=`/etc. resolves against the host's root
+instead of `RootDirectory=`, missing the chroot's own private `/tmp` mount
+entirely. The fix is the same either way — prefix the path with `+`:
+`NoExecPaths=+/tmp` (see `systemd.exec(5)`).
 
 ## Safety
 
@@ -213,8 +185,7 @@ kind are checked by reading the process's capability bitmask instead of
 performing them.
 
 `--exec-check` is the exception: it runs the unit's actual `ExecStart`, so
-it can have the same side effects the unit itself would have (see
-`--exec-check` above).
+it can have the same side effects the unit itself would have.
 
 ## How it works
 
