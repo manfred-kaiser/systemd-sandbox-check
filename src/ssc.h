@@ -21,7 +21,7 @@
 #ifndef SSC_H
 #define SSC_H
 
-#define SSC_VERSION "0.1.0"
+#define SSC_VERSION "0.2.0"
 
 #include <stddef.h>
 
