@@ -1,0 +1,33 @@
+name: C build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install static glibc
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libc6-dev
+    - name: Build
+      run: make -C c
+    - name: Smoke test -- missing unit file is rejected
+      run: |
+        ! ./c/systemd-sandbox-check --unit /nonexistent.service --dry-run
+    - name: Smoke test -- dry-run against a minimal unit
+      run: |
+        cat > /tmp/example.service <<'EOF'
+        [Service]
+        ExecStart=/bin/true
+        NoNewPrivileges=true
+        ProtectSystem=strict
+        EOF
+        ./c/systemd-sandbox-check --unit /tmp/example.service --dry-run | grep -q systemd-run

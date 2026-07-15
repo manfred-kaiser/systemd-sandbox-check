@@ -1,15 +1,13 @@
 # systemd-sandbox-check
 
 <p align="center">
-  <a href="https://pypi.org/project/systemd-sandbox-check"><img src="https://img.shields.io/pypi/v/systemd-sandbox-check" alt="PyPI"></a>
-  <a href="https://pypi.org/project/systemd-sandbox-check"><img src="https://img.shields.io/pypi/pyversions/systemd-sandbox-check" alt="Python versions"></a>
   <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/blob/main/LICENSE"><img src="https://img.shields.io/github/license/manfred-kaiser/systemd-sandbox-check" alt="License"></a>
-  <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/python-package.yml"><img src="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/python-package.yml/badge.svg" alt="Build status"></a>
+  <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml"><img src="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml/badge.svg" alt="Build status"></a>
 </p>
 
 <p align="center">
-  <strong>Verify that systemd sandboxing/hardening directives on a unit
-  actually take effect at runtime — not just on paper.</strong>
+  <strong>Runtime verification for systemd sandboxing/hardening directives on
+  a unit file.</strong>
 </p>
 
 ---
@@ -38,15 +36,24 @@ two ways:
 
 ## Installation
 
-```
-pip install systemd-sandbox-check
-```
-
-Or from a checkout (regular install, not editable):
+A single self-contained, statically linked binary — no interpreter, no
+dependencies.
 
 ```
-pip install .
+cd c
+make
+sudo cp systemd-sandbox-check /usr/local/bin/
 ```
+
+Requires `gcc` and glibc's static-linking support (`glibc-devel-static` on
+openSUSE/RHEL, `libc6-dev` normally suffices on Debian/Ubuntu).
+
+**Do not install it under a directory affected by the target unit's
+`ProtectHome=`** (e.g. anywhere under `/home`). The orchestrator bind-mounts
+its own binary into the transient sandbox so it can re-exec itself there;
+if the target unit's hardening also hides the binary's own path, that bind
+mount fails and the run errors out with `status=203/EXEC`. `/usr/local/bin`
+is a safe, unaffected location for any normal hardening configuration.
 
 ## Usage
 
@@ -74,8 +81,8 @@ Configured but not dynamically probed (static-only, see `systemd-analyze securit
 Summary: 19 PASS, 1 FAIL, 0 WARN, 3 INFO
 ```
 
-Exit code is non-zero if any check comes back `FAIL`, so it can be wired
-into CI.
+Exit code is non-zero if any check reports `FAIL`, so it can be used as a
+CI gate.
 
 ### `--exec-check`: does the application itself still come up?
 
@@ -97,6 +104,17 @@ result. `ExecStart=` lines prefixed with `+`/`!`/`!!` (which escape or alter
 the sandbox — see `systemd.service(5)`) are skipped with a warning instead
 of silently running unsandboxed.
 
+### `--socket-unit`: check the matching `.socket` unit too
+
+```
+sudo systemd-sandbox-check --unit /path/to/some.service --socket-unit /path/to/some.socket
+```
+
+Runs a set of static lint checks against the `[Socket]` section
+(`TriggerLimitIntervalSec=`/`TriggerLimitBurst=` present, `Accept=`/
+`MaxConnections=` sanity, `KeepAlive*=` consistency) alongside the dynamic
+`[Service]` probe battery.
+
 ## What it checks
 
 For each of these directives found in the unit's `[Service]` section, a
@@ -108,6 +126,8 @@ targeted probe runs inside the transient unit and reports `PASS` / `FAIL` /
 | `NoNewPrivileges` | reads the `NoNewPrivs` flag from `/proc/self/status` |
 | `ProtectSystem` | tries to create a file under `/usr` |
 | `ReadWritePaths` | positive control: confirms the path is still writable |
+| `BindReadOnlyPaths` | confirms the bind-mounted path is readable but not writable |
+| `BindPaths` | positive control: confirms the bind-mounted path is still writable |
 | `ProtectHome` | tries to list `/root` |
 | `PrivateTmp` | checks `/tmp`'s mount source for a `systemd-private-*` path |
 | `PrivateDevices` | checks `/dev/sda` is gone, `/dev/null` still works |
@@ -126,10 +146,31 @@ targeted probe runs inside the transient unit and reports `PASS` / `FAIL` /
 | `MemoryDenyWriteExecute` | tries an anonymous RWX `mmap` |
 | `CapabilityBoundingSet` / `AmbientCapabilities` | decodes the capability bitmask; confirms a granted capability (e.g. binding a privileged port) still works |
 | `UMask` | checks the mode of a freshly created file |
+| `PrivateUsers` | checks `/proc/self/uid_map` for a non-identity mapping |
+| `ProcSubset` | tries to list `/proc/1` vs. only `/proc/self` |
+| `RootDirectory` / `RootImage` | confirms the process's `/` differs from the host's |
+| `NoExecPaths` / `ExecPaths` | copies the probe binary to a non-allowlisted path and confirms it refuses to execute |
+| `OOMScoreAdjust` | reads `/proc/self/oom_score_adj` |
+| `MemoryMax` / `MemoryHigh` | reads back the effective cgroup v2 `memory.max`/`memory.high` |
+| `TasksMax` | reads back the effective cgroup v2 `pids.max` |
+| `LimitNOFILE` | reads back the process's `RLIMIT_NOFILE` via `getrlimit()` |
+| `CPUWeight` / `IOWeight` | reads back the effective cgroup v2 `cpu.weight`/`io.weight` |
 
-Positive controls are included where relevant (`ReadWritePaths`, `AF_INET`)
-so the tool also flags over-restrictive configurations, not just missing
-ones.
+Positive controls are included where relevant (`ReadWritePaths`, `BindPaths`,
+`AF_INET`) so the tool also flags over-restrictive configurations, not just
+missing ones.
+
+Additionally, two **static** lint checks run without starting anything:
+
+- The `"+"` path-prefix convention for `ReadWritePaths=`/`ReadOnlyPaths=`/
+  `InaccessiblePaths=`/`ExecPaths=`/`NoExecPaths=` under `RootDirectory=`/
+  `RootImage=` (see [systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)):
+  flags a bare (non-`+`-prefixed) path under those directives when
+  `RootDirectory=`/`RootImage=` is also set, since it silently resolves
+  relative to the *host* root instead of the chroot.
+- `[Socket]` section sanity (with `--socket-unit`): missing
+  `TriggerLimitIntervalSec=`/`TriggerLimitBurst=`, `Accept=`/
+  `MaxConnections=` combinations, `KeepAlive*=` consistency.
 
 ## Limitations
 
@@ -151,6 +192,28 @@ of exercising them.
 `--exec-check` is the one deliberate exception: it's opt-in precisely
 because it runs the real application, with real side effects. See the
 `--exec-check` section above.
+
+## How it works
+
+A single static binary plays two roles, dispatched via an internal-only CLI
+flag never exposed to users:
+
+- **Orchestrator** (default): parses the target unit file, starts a
+  transient unit via `systemd-run` with the identical `[Service]`
+  properties, then re-execs *itself* inside that transient unit to run the
+  probe battery, and collects/prints the results.
+- **Probe** (`--ssc-probe-internal`, internal only): runs the actual checks,
+  reading its configuration from environment variables set by the
+  orchestrator.
+
+The probe process runs *inside* the transient unit, which inherits the
+target unit's own `NoExecPaths=`/`ExecPaths=` allowlist — so a general
+interpreter (`python3`, ...) might simply not be executable there (this is
+exactly what happens against a unit that only allows its own bundled
+interpreter to run). Self-reexec sidesteps the problem entirely: the
+orchestrator adds its own binary's path to the transient unit's
+`ExecPaths=`/`BindReadOnlyPaths=`, so the probe never depends on anything
+the target unit happens to allow.
 
 ## License
 

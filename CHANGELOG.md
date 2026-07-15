@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Rewritten from Python to C, and the Python implementation removed.**
+  The tool now ships as a single statically linked binary that re-execs
+  itself inside the transient sandbox to run its probes, instead of
+  shelling out to `python3` -- which may not be executable at all under a
+  unit's own `NoExecPaths=`/`ExecPaths=` allowlist. See the README's "How
+  it works" section. Functional parity with the last Python version was
+  verified check-by-check (39 checks, identical PASS/FAIL/WARN/INFO output)
+  before the Python source was deleted.
+- `pip install systemd-sandbox-check` / `pyproject.toml` / the PyPI publish
+  workflow no longer apply; build from source with `make -C c` instead.
+
 ### Added
 
 - `--exec-check` (with `--exec-check-timeout`, default 5s): starts the
@@ -14,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays up, instead of only checking individual restrictions in isolation.
   Not a no-op like the other probes -- has real side effects (production
   paths/network bindings) and is therefore opt-in.
+- `--socket-unit` for static `[Socket]` section lint checks alongside the
+  `[Service]` probe battery.
+- Probes for `PrivateUsers`, `ProcSubset`, `RootDirectory`/`RootImage`,
+  `NoExecPaths`/`ExecPaths`, `BindPaths`/`BindReadOnlyPaths`,
+  `OOMScoreAdjust`, `MemoryMax`/`MemoryHigh`, `TasksMax`, `LimitNOFILE`,
+  `CPUWeight`/`IOWeight`.
+- A static lint for the `"+"` path-prefix convention required by
+  `ReadWritePaths=`/`ReadOnlyPaths=`/`InaccessiblePaths=`/`ExecPaths=`/
+  `NoExecPaths=` under `RootDirectory=`/`RootImage=`
+  ([systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
 
 ## [0.1.0] - 2026-07-06
 
