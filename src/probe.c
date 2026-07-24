@@ -524,10 +524,30 @@ int run_probe(void) {
                         "which is documented to bypass this restriction (systemd.exec(5))");
     }
 
-    /* 14. RestrictNamespaces: unshare(CLONE_NEWNS) must fail */
+    /* 14. RestrictNamespaces: unshare(CLONE_NEWNS) must fail. Run in a
+     * forked child, not the main probe process -- confirmed by hand
+     * (2026-07-24) that calling unshare(CLONE_NEWNS) directly here, when it
+     * succeeds (i.e. RestrictNamespaces= is absent/not blocking it), gives
+     * this process a freshly unshared mount namespace that changes the
+     * outcome of LATER checks in the same run, in particular no_exec_paths
+     * (#25): NoExecPaths=/tmp under RootDirectory= without a "+" prefix
+     * appeared to depend on RestrictNamespaces= in earlier testing, but
+     * that was entirely this contamination, not a real interaction between
+     * the two directives -- an isolated, unshare()-free reproduction shows
+     * the bug is present either way. Isolating the unshare() call to a
+     * child (which exits right after) keeps the main probe process's mount
+     * namespace untouched for every check that runs after this one. */
     {
-        int rc = unshare(CLONE_NEWNS);
-        blocked_result("RestrictNamespaces", truthy, rc != 0, "restrict_namespaces",
+        pid_t pid = fork();
+        if (pid == 0) {
+            _exit(unshare(CLONE_NEWNS) == 0 ? 0 : 1);
+        }
+        int status = 0;
+        int blocked = 1;
+        if (pid > 0 && waitpid(pid, &status, 0) == pid && WIFEXITED(status)) {
+            blocked = WEXITSTATUS(status) != 0;
+        }
+        blocked_result("RestrictNamespaces", truthy, blocked, "restrict_namespaces",
                         "unshare(CLONE_NEWNS) blocked", "unshare(CLONE_NEWNS) SUCCEEDED");
     }
 

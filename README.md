@@ -151,14 +151,17 @@ sudo systemd-sandbox-check --unit examples/privatetmp-noexecpaths-bug.service
 # [FAIL] no_exec_paths (NoExecPaths): copy of interpreter outside ExecPaths= EXECUTED -- allowlist not enforced
 ```
 
-Confirmed by testing, isolating each directive one at a time: the unit
-needs `RestrictNamespaces=` set alongside `RootDirectory=` for this to
-happen — `RootDirectory=` with a bare `NoExecPaths=/tmp` and no
-`RestrictNamespaces=` correctly blocks execution. With both present, a bare
-path in `NoExecPaths=`/`ExecPaths=`/etc. resolves against the host's root
-instead of `RootDirectory=`, missing the chroot's own private `/tmp` mount
-entirely. The fix is the same either way — prefix the path with `+`:
-`NoExecPaths=+/tmp` (see `systemd.exec(5)`).
+`RootDirectory=`/`RootImage=` alone is sufficient to trigger this — a bare
+(non-`+`-prefixed) path in `NoExecPaths=`/`ExecPaths=`/etc. resolves
+against the host's original root instead of `RootDirectory=` once it's
+set, missing the chroot's own private `/tmp` mount entirely (see
+`systemd.exec(5)` and [systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
+`RestrictNamespaces=` has no effect on it either way — an earlier version
+of this README claimed otherwise, based on a misreading of the tool's own
+output (see the `restrict_namespaces` fix in the changelog for why running
+that specific check could make an unrelated, later check's result look
+different, even though nothing about the actual bug had changed). The fix:
+prefix the path with `+`: `NoExecPaths=+/tmp`.
 
 ## Safety
 

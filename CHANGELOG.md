@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `restrict_namespaces`: the `unshare(CLONE_NEWNS)` probe now runs in a
+  forked child instead of the main probe process. Confirmed by hand
+  (2026-07-24) that running it inline had a real side effect: when it
+  succeeded (i.e. `RestrictNamespaces=` absent/not blocking it), the main
+  probe process was left with a freshly unshared mount namespace for the
+  rest of the run, which changed the outcome of later checks -- in
+  particular `no_exec_paths` (checked directly after, via an isolated,
+  unshare()-free reproduction: the NoExecPaths=/RootDirectory= bug is
+  present or absent identically regardless of `RestrictNamespaces=`; the
+  previously observed correlation between them was entirely this
+  cross-check contamination, not a real interaction between the two
+  directives). This also retracts the README's and
+  `examples/privatetmp-noexecpaths-bug.service`'s prior claim that
+  `RestrictNamespaces=` was required to trigger the bug -- `RootDirectory=`
+  alone (missing the `"+"` prefix) is fully sufficient.
 - `protect_home`: replaced an `opendir("/root")`-based accessibility check
   with a check for a dedicated mount at `/root` in `/proc/self/mountinfo`.
   The old check had no discriminating power for any root-run unit that
