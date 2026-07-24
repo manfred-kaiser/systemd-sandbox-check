@@ -106,6 +106,59 @@ static int cap_present(const char *name, const char *field) {
     return (cap_bitmask(field) & (1ULL << bit)) != 0;
 }
 
+/* --- /proc/self/mountinfo lookup: fstype + per-mount options for a given
+ * mount point, if a dedicated mount exists there. Two properties this file
+ * needs that plain permission-based probing can't give us: capability-
+ * independence (root's default CAP_DAC_OVERRIDE/CAP_DAC_READ_SEARCH bypasses
+ * DAC permission checks regardless of the actual protection -- confirmed by
+ * hand that opendir("/root") succeeds identically whether ProtectHome= is
+ * set or not, as long as the unit doesn't ALSO strip those capabilities from
+ * CapabilityBoundingSet=) and host-agnosticism (a specific device node like
+ * /dev/sda doesn't exist on NVMe-/virtio-only hosts, confirmed by hand on
+ * this machine, which has only /dev/nvme0n1). */
+static int mountinfo_lookup(const char *path, char *fstype, size_t fstype_len,
+                              char *mount_opts, size_t opts_len) {
+    FILE *f = fopen("/proc/self/mountinfo", "r");
+    if (!f) return 0;
+    char line[2048];
+    int found = 0;
+    while (!found && fgets(line, sizeof(line), f)) {
+        char *copy = strdup(line);
+        char *fields[16] = {0};
+        int nf = 0;
+        char *saveptr;
+        for (char *tok = strtok_r(copy, " ", &saveptr); tok && nf < 16; tok = strtok_r(NULL, " ", &saveptr)) {
+            fields[nf++] = tok;
+        }
+        /* mountinfo(5): ... (5)mount-point (6)mount-opts ... "-" fstype source super-opts */
+        if (nf > 5 && strcmp(fields[4], path) == 0) {
+            if (mount_opts) snprintf(mount_opts, opts_len, "%s", fields[5]);
+            for (int i = 6; i < nf; i++) {
+                if (strcmp(fields[i], "-") == 0 && i + 1 < nf) {
+                    if (fstype) snprintf(fstype, fstype_len, "%s", fields[i + 1]);
+                    break;
+                }
+            }
+            found = 1;
+        }
+        free(copy);
+    }
+    fclose(f);
+    return found;
+}
+
+/* True if `token` is one of the comma-separated entries in `opts` (not just
+ * a substring match -- "noexec" must not match a search for "exec"). */
+static int has_mount_opt(const char *opts, const char *token) {
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s", opts);
+    char *saveptr;
+    for (char *tok = strtok_r(buf, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
+        if (strcmp(tok, token) == 0) return 1;
+    }
+    return 0;
+}
+
 /* A "true"-like value for a boolean directive (systemd accepts several
  * spellings; we only need to recognize the common ones here). */
 static int truthy(const char *v) {
@@ -342,13 +395,14 @@ int run_probe(void) {
         }
     }
 
-    /* 4. ProtectHome: /root must be inaccessible */
+    /* 4. ProtectHome: a dedicated mount must exist at /root (see
+     * mountinfo_lookup's comment for why this replaces a plain
+     * opendir()-based accessibility check). */
     {
-        DIR *d = opendir("/root");
-        int accessible = d != NULL;
-        if (d) closedir(d);
-        blocked_result("ProtectHome", is_home_protected, !accessible, "protect_home",
-                        "/root is inaccessible", "/root IS accessible");
+        int has_own_mount = mountinfo_lookup("/root", NULL, 0, NULL, 0);
+        blocked_result("ProtectHome", is_home_protected, has_own_mount, "protect_home",
+                        "/root is a dedicated (empty) mount, separate from the host's",
+                        "/root is NOT a separate mount -- resolves to the host's real /root");
     }
 
     /* 5. PrivateTmp: /tmp mount should come from a systemd-private-* source */
@@ -377,12 +431,17 @@ int run_probe(void) {
                         "/tmp is a private systemd-private mount", "/tmp does NOT look like a private mount (heuristic)");
     }
 
-    /* 6. PrivateDevices */
+    /* 6. PrivateDevices: the real host /dev is always kernel-provided
+     * "devtmpfs"; PrivateDevices= replaces it with a private, minimal
+     * "tmpfs" instance (see mountinfo_lookup's comment for why this
+     * replaces a specific-device-node check). */
     {
-        struct stat st;
-        int sda_exists = stat("/dev/sda", &st) == 0;
-        blocked_result("PrivateDevices", truthy, !sda_exists, "private_devices",
-                        "/dev/sda not visible", "/dev/sda IS visible");
+        char fstype[64] = {0};
+        int have_mount = mountinfo_lookup("/dev", fstype, sizeof(fstype), NULL, 0);
+        int is_private = have_mount && strcmp(fstype, "tmpfs") == 0;
+        blocked_result("PrivateDevices", truthy, is_private, "private_devices",
+                        "/dev is a private tmpfs instance, not the host's real devtmpfs",
+                        "/dev is still the host's real devtmpfs -- full device list visible");
         int null_ok = try_open_existing("/dev/null", O_RDONLY);
         ssc_emit(null_ok ? SSC_PASS : SSC_WARN, "private_devices_null_control", "PrivateDevices",
                   null_ok ? "/dev/null accessible" : "/dev/null NOT accessible -- likely over-restrictive");
@@ -409,13 +468,20 @@ int run_probe(void) {
                         "/dev/kmsg not accessible", "/dev/kmsg IS accessible");
     }
 
-    /* 10. ProtectControlGroups */
+    /* 10. ProtectControlGroups: cgroupfs never supports creating arbitrary
+     * regular files via O_CREAT at all -- confirmed by hand this fails with
+     * EPERM identically with or without ProtectControlGroups= (at both the
+     * cgroup root and the unit's own delegated subtree), so a
+     * try_create_and_remove()-based check had no discriminating power at
+     * all. ProtectControlGroups= instead remounts the whole /sys/fs/cgroup
+     * tree read-only, which shows up as "ro" vs "rw" in its own mount
+     * options. */
     {
-        char path[128];
-        snprintf(path, sizeof(path), "/sys/fs/cgroup/.sandbox-check-%d", getpid());
-        int ok = try_create_and_remove(path);
-        blocked_result("ProtectControlGroups", truthy, !ok, "protect_control_groups",
-                        "/sys/fs/cgroup not writable", "/sys/fs/cgroup IS writable");
+        char mount_opts[256] = {0};
+        int have_mount = mountinfo_lookup("/sys/fs/cgroup", NULL, 0, mount_opts, sizeof(mount_opts));
+        int is_readonly = have_mount && has_mount_opt(mount_opts, "ro");
+        blocked_result("ProtectControlGroups", truthy, is_readonly, "protect_control_groups",
+                        "/sys/fs/cgroup is mounted read-only", "/sys/fs/cgroup is mounted read-write");
     }
 
     /* 11. ProtectClock */
@@ -439,13 +505,23 @@ int run_probe(void) {
                         "private UTS namespace (differs from host)", "UTS namespace matches host -- hostname changes would propagate");
     }
 
-    /* 13. ProtectProc: /proc/1 must not be visible */
+    /* 13. ProtectProc: /proc/1 must not be visible. Confirmed by hand: this
+     * is a real gap, not a probe artifact -- ProtectProc= is a no-op for any
+     * process that still holds CAP_SYS_PTRACE (the default for a unit that
+     * doesn't also restrict CapabilityBoundingSet=), exactly as documented
+     * in systemd.exec(5): "ProtectProc= has to be used together with User=/
+     * DynamicUser=yes and without CAP_SYS_PTRACE, to be effective." A FAIL
+     * here despite ProtectProc= being set usually means CAP_SYS_PTRACE is
+     * still in the unit's CapabilityBoundingSet=. */
     {
         DIR *d = opendir("/proc/1");
         int visible = d != NULL;
         if (d) closedir(d);
         blocked_result("ProtectProc", is_invisible_proc, !visible, "protect_proc",
-                        "/proc/1 not visible", "/proc/1 IS visible");
+                        "/proc/1 not visible",
+                        "/proc/1 IS visible -- if ProtectProc= is set, the unit's "
+                        "CapabilityBoundingSet= probably still retains CAP_SYS_PTRACE, "
+                        "which is documented to bypass this restriction (systemd.exec(5))");
     }
 
     /* 14. RestrictNamespaces: unshare(CLONE_NEWNS) must fail */

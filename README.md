@@ -60,7 +60,7 @@ without running anything.
 ```
 [PASS] protect_system_usr_rw            (ProtectSystem): /usr is not writable
 [PASS] readwritepaths_rw                (ReadWritePaths): /var/lib/example writable as expected
-[FAIL] protect_home                     (ProtectHome): /root IS accessible
+[FAIL] protect_home                     (ProtectHome): /root is NOT a separate mount -- resolves to the host's real /root
 [PASS] restrict_af_netlink              (RestrictAddressFamilies): AF_NETLINK blocked as expected
 [PASS] restrict_af_inet_control         (RestrictAddressFamilies): AF_INET still works
 [INFO] syscall_filter                   (SystemCallFilter): not dynamically probed for safety; see systemd-analyze security
@@ -104,12 +104,12 @@ Runs static checks against the matching `[Socket]` section
 | Category | Directives | How it's probed |
 |---|---|---|
 | Namespace & root isolation | `PrivateUsers`, `ProcSubset`, `ProtectHostname`, `RestrictNamespaces`, `RootDirectory`/`RootImage` | confirms UID mapping, `/proc` visibility, the UTS namespace, and the process root actually differ from the host; confirms `unshare(CLONE_NEWNS)` is blocked |
-| Filesystem write protection | `ProtectSystem`, `ProtectHome`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectProc` | tries to write under `/usr`, list `/root`/`/proc/1`, write a kernel tunable, open `/dev/kmsg`, write under `/sys/fs/cgroup`; checks `CAP_SYS_MODULE` |
+| Filesystem write protection | `ProtectSystem`, `ProtectHome`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectProc` | tries to write under `/usr`, write a kernel tunable, open `/dev/kmsg`, lists `/proc/1`; checks `CAP_SYS_MODULE`; checks for a dedicated mount at `/root` and a read-only mount flag on `/sys/fs/cgroup` via `/proc/self/mountinfo` (not a permission-based check -- root's default capabilities bypass DAC permissions regardless of the actual protection) |
 | Path allow/denylists | `ReadWritePaths`, `BindReadOnlyPaths`, `BindPaths`, `NoExecPaths`/`ExecPaths` | confirms each declared path is writable/read-only/executable exactly as configured, with positive controls for paths that should stay writable |
 | Privilege & capability restriction | `NoNewPrivileges`, `CapabilityBoundingSet`, `AmbientCapabilities`, `RestrictSUIDSGID`, `LockPersonality`, `ProtectClock` | reads `NoNewPrivs`/the capability bitmask directly; tries `chmod +s` and a `personality()` change |
 | Network & execution restriction | `RestrictAddressFamilies`, `MemoryDenyWriteExecute`, `RestrictRealtime` | tries a blocked address family (plus an `AF_INET` positive control), an anonymous RWX `mmap`, and `SCHED_FIFO` |
 | Resource control readback | `OOMScoreAdjust`, `MemoryMax`/`MemoryHigh`, `TasksMax`, `LimitNOFILE`, `CPUWeight`/`IOWeight` | reads back the effective cgroup v2 / `getrlimit()` values |
-| `PrivateTmp`, `PrivateDevices`, `UMask` | — | checks `/tmp`'s mount source, that `/dev/sda` is gone but `/dev/null` works, and the mode of a freshly created file |
+| `PrivateTmp`, `PrivateDevices`, `UMask` | — | checks `/tmp`'s mount source, that `/dev`'s filesystem type differs from the host's real `devtmpfs` (not a specific device node -- that assumes a SATA/SCSI disk, which doesn't exist on NVMe-/virtio-only hosts) but `/dev/null` still works, and the mode of a freshly created file |
 
 Positive controls (`ReadWritePaths`, `BindPaths`, `AF_INET`) run alongside
 the negative ones, so an over-restrictive configuration is reported the

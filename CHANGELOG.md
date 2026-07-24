@@ -14,6 +14,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `release.yml`, replacing the smoke checks that used to live inline in
   the workflow YAML.
 
+### Fixed
+
+- `protect_home`: replaced an `opendir("/root")`-based accessibility check
+  with a check for a dedicated mount at `/root` in `/proc/self/mountinfo`.
+  The old check had no discriminating power for any root-run unit that
+  doesn't also strip `CAP_DAC_OVERRIDE`/`CAP_DAC_READ_SEARCH` from
+  `CapabilityBoundingSet=`: root's default capabilities bypass the
+  substitute directory's `0000` permissions regardless of whether
+  `ProtectHome=` is set at all, so `opendir()` succeeded identically either
+  way (confirmed by hand).
+- `private_devices`: replaced a hardcoded `/dev/sda` existence check with a
+  comparison of `/dev`'s filesystem type (`tmpfs` when private, `devtmpfs`
+  on the host) via mountinfo. The old check silently reported `PrivateDevices=`
+  as enforced on any host without a SATA/SCSI disk at that exact path --
+  including this project's own NVMe-only dev machine -- regardless of
+  whether the directive was even set.
+- `protect_control_groups`: replaced an `open(O_CREAT)`-under-`/sys/fs/cgroup`
+  check with a read-only mount-option check via mountinfo. cgroupfs doesn't
+  support creating arbitrary regular files at all, with or without
+  `ProtectControlGroups=`, at either the cgroup root or the unit's own
+  delegated subtree (confirmed by hand) -- the old check had no
+  discriminating power.
+- `protect_proc`: detail message now notes that a FAIL despite
+  `ProtectProc=` being set usually means `CapabilityBoundingSet=` still
+  retains `CAP_SYS_PTRACE`, which systemd.exec(5) documents as bypassing
+  this restriction entirely. Not a probe bug -- confirmed by hand this is
+  real, documented systemd behavior -- but worth surfacing so it isn't
+  mistaken for one.
+
 ## [0.2.0] - 2026-07-15
 
 ### Changed
