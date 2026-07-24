@@ -1,0 +1,4 @@
+[Service]
+ExecStart=/bin/true
+ExecPaths=/a
+ExecPaths=/b

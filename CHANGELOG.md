@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tests/run.sh`: a black-box test suite covering CLI basics, unit-file
+  parsing/`systemd-run` argv construction, the "+"-prefix lint and the
+  `[Socket]` static lint (14 checks). Wired into both `c-build.yml` and
+  `release.yml`, replacing the smoke checks that used to live inline in
+  the workflow YAML.
+
 ## [0.2.0] - 2026-07-15
 
 ### Changed

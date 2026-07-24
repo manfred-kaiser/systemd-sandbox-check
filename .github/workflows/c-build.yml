@@ -19,15 +19,5 @@ jobs:
         sudo apt-get install -y libc6-dev
     - name: Build
       run: make -C src
-    - name: Smoke test -- missing unit file is rejected
-      run: |
-        ! ./src/systemd-sandbox-check --unit /nonexistent.service --dry-run
-    - name: Smoke test -- dry-run against a minimal unit
-      run: |
-        cat > /tmp/example.service <<'EOF'
-        [Service]
-        ExecStart=/bin/true
-        NoNewPrivileges=true
-        ProtectSystem=strict
-        EOF
-        ./src/systemd-sandbox-check --unit /tmp/example.service --dry-run | grep -q systemd-run
+    - name: Run tests
+      run: sh tests/run.sh

@@ -188,6 +188,18 @@ orchestrator adds its own binary's path to the transient unit's
 `ExecPaths=`/`BindReadOnlyPaths=`, so the probe process only depends on a
 path the orchestrator controls.
 
+## Testing
+
+```sh
+sh tests/run.sh
+```
+
+Black-box tests against the built binary's `--version`/`--dry-run` output:
+CLI basics, unit-file parsing and `systemd-run` argv construction, and the
+`"+"`-prefix and `[Socket]` static lints. Doesn't cover the live probe
+battery itself (needs root and a real `systemd-run`), and is what CI runs
+on every push.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

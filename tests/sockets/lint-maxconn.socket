@@ -1,0 +1,3 @@
+[Socket]
+Accept=no
+MaxConnections=10

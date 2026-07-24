@@ -1,0 +1,4 @@
+[Service]
+ExecStart=/bin/true
+RootDirectory=/run/plus-prefix-pass-test
+ReadOnlyPaths=+/etc/example
