@@ -115,7 +115,8 @@ Positive controls (`ReadWritePaths`, `BindPaths`, `AF_INET`) run alongside
 the negative ones, so an over-restrictive configuration is reported the
 same way a missing restriction is.
 
-Two checks run statically, without starting a transient unit:
+Three checks run statically, without starting a transient unit (so they
+also work under `--dry-run`, without root):
 
 - The `"+"` path-prefix convention for `ReadWritePaths=`/`ReadOnlyPaths=`/
   `InaccessiblePaths=`/`ExecPaths=`/`NoExecPaths=` under `RootDirectory=`/
@@ -123,6 +124,10 @@ Two checks run statically, without starting a transient unit:
   a bare (non-`+`-prefixed) path under those directives resolves relative
   to the host root instead of the chroot when `RootDirectory=`/
   `RootImage=` is also set; this is flagged.
+- `ProtectProc=invisible`/`noaccess`/`ptraceable` set without
+  `CapabilityBoundingSet=` excluding `CAP_SYS_PTRACE`: per `systemd.exec(5)`,
+  a process that still holds `CAP_SYS_PTRACE` bypasses `ProtectProc=`
+  entirely, making it a no-op.
 - `[Socket]` section checks, with `--socket-unit` (see above).
 
 `SystemCallFilter`/`SystemCallArchitectures` (seccomp) are reported as
@@ -195,10 +200,9 @@ sh tests/run.sh
 ```
 
 Black-box tests against the built binary's `--version`/`--dry-run` output:
-CLI basics, unit-file parsing and `systemd-run` argv construction, and the
-`"+"`-prefix and `[Socket]` static lints. Doesn't cover the live probe
-battery itself (needs root and a real `systemd-run`), and is what CI runs
-on every push.
+CLI basics, unit-file parsing and `systemd-run` argv construction, and all
+three static lints. Doesn't cover the live probe battery itself (needs root
+and a real `systemd-run`), and is what CI runs on every push.
 
 ## License
 

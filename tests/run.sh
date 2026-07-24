@@ -109,6 +109,17 @@ assert_contains "socket_lint_maxconnections_without_accept" "only applies with A
 assert_contains "socket_lint_triggerlimit_zero_warns" "disables activation rate limiting" -- \
     "$BIN" --unit "$UNITS/basic.service" --dry-run --socket-unit "$SOCKETS/lint-triggerlimit-zero.socket"
 
+# --- ProtectProc= vs CAP_SYS_PTRACE lint ---
+
+assert_contains "protectproc_ptrace_warns_without_capfix" "CAP_SYS_PTRACE bypasses this restriction" -- \
+    "$BIN" --unit "$UNITS/protectproc-no-capfix.service" --dry-run
+
+assert_not_contains "protectproc_ptrace_silent_when_excluded" "Static lint: ProtectProc=" -- \
+    "$BIN" --unit "$UNITS/protectproc-capfixed.service" --dry-run
+
+assert_not_contains "protectproc_ptrace_silent_when_capset_emptied" "Static lint: ProtectProc=" -- \
+    "$BIN" --unit "$UNITS/protectproc-emptycapset.service" --dry-run
+
 echo
 if [ "$fail_count" -eq 0 ]; then
     echo "All tests passed."

@@ -9,10 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `tests/run.sh`: a black-box test suite covering CLI basics, unit-file
-  parsing/`systemd-run` argv construction, the "+"-prefix lint and the
-  `[Socket]` static lint (14 checks). Wired into both `c-build.yml` and
-  `release.yml`, replacing the smoke checks that used to live inline in
-  the workflow YAML.
+  parsing/`systemd-run` argv construction, the "+"-prefix lint, the
+  `[Socket]` static lint and the new `ProtectProc=`/`CAP_SYS_PTRACE` lint
+  (17 checks). Wired into both `c-build.yml` and `release.yml`, replacing
+  the smoke checks that used to live inline in the workflow YAML.
+- A new static lint: `ProtectProc=invisible`/`noaccess`/`ptraceable` is a
+  no-op for any process that still holds `CAP_SYS_PTRACE` in its effective
+  `CapabilityBoundingSet=` -- documented in systemd.exec(5), confirmed by
+  hand (see the `protect_proc` fix above). Unlike the dynamic `protect_proc`
+  probe, this fires purely from parsing the unit file (even under
+  `--dry-run`, no root/systemd-run needed), so it catches the gap before a
+  single live run is ever done.
 
 ### Fixed
 

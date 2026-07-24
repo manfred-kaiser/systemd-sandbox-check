@@ -1,0 +1,4 @@
+[Service]
+ExecStart=/bin/true
+ProtectProc=invisible
+CapabilityBoundingSet=~CAP_SYS_PTRACE

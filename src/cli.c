@@ -294,6 +294,61 @@ static void lint_plus_prefix(const kv_list_t *pairs, counts_t *counts, int use_c
     free_str_array(fresh);
 }
 
+/* ===================== static lint: ProtectProc= vs CAP_SYS_PTRACE ===================== */
+
+/* True if `cap_name` is excluded from the *effective* CapabilityBoundingSet=
+ * as systemd computes it: an empty value drops every capability; a plain
+ * (non-"~") list is an allowlist (only listed capabilities survive, so
+ * anything absent from it -- including cap_name -- is already excluded); a
+ * "~"-prefixed list instead removes just the listed capabilities from the
+ * full default set; and if the directive isn't set at all, the full default
+ * set (which includes cap_name for a root-run unit) survives untouched. */
+static int capability_bounding_set_excludes(const kv_list_t *pairs, const char *cap_name) {
+    if (!kv_has(pairs, "CapabilityBoundingSet")) return 0;
+    char *merged = kv_merge(pairs, "CapabilityBoundingSet");
+    if (!merged || *merged == '\0') { free(merged); return 1; }
+    int has_positive = 0, listed_positive = 0, listed_negative = 0;
+    char buf[4096];
+    snprintf(buf, sizeof(buf), "%s", merged);
+    free(merged);
+    char *saveptr;
+    for (char *tok = strtok_r(buf, " ", &saveptr); tok; tok = strtok_r(NULL, " ", &saveptr)) {
+        if (tok[0] == '~') {
+            if (strcasecmp(tok + 1, cap_name) == 0) listed_negative = 1;
+        } else {
+            has_positive = 1;
+            if (strcasecmp(tok, cap_name) == 0) listed_positive = 1;
+        }
+    }
+    return has_positive ? !listed_positive : listed_negative;
+}
+
+/* ProtectProc=invisible/noaccess/ptraceable is a no-op for any process that
+ * still holds CAP_SYS_PTRACE -- confirmed by hand (see probe.c's protect_proc
+ * comment) and documented in systemd.exec(5): "ProtectProc= has to be used
+ * together with User=/DynamicUser=yes and without CAP_SYS_PTRACE, to be
+ * effective." Purely static (no root/systemd-run needed), unlike the
+ * dynamic protect_proc probe, which only surfaces this on a live run. */
+static void lint_protectproc_ptrace(const kv_list_t *pairs, counts_t *counts, int use_color) {
+    char *pp = kv_merge(pairs, "ProtectProc");
+    if (!pp) return;
+    int restrictive = strcasecmp(pp, "invisible") == 0 || strcasecmp(pp, "noaccess") == 0 ||
+                       strcasecmp(pp, "ptraceable") == 0;
+    if (restrictive && !capability_bounding_set_excludes(pairs, "CAP_SYS_PTRACE")) {
+        printf("Static lint: ProtectProc= vs CapabilityBoundingSet=\n");
+        bump(counts, "WARN");
+        char detail[512];
+        snprintf(detail, sizeof(detail),
+                  "ProtectProc=%s is set, but CapabilityBoundingSet= still retains CAP_SYS_PTRACE "
+                  "(or isn't restricted at all) -- per systemd.exec(5), CAP_SYS_PTRACE bypasses this "
+                  "restriction entirely, making it a no-op. Add CapabilityBoundingSet=~CAP_SYS_PTRACE "
+                  "(or an allowlist that omits it).", pp);
+        print_result_line("WARN", "protectproc_capsysptrace", "ProtectProc", detail, use_color);
+        printf("\n");
+    }
+    free(pp);
+}
+
 /* ===================== static lint: .socket unit ===================== */
 
 static void lint_socket_unit(const char *socket_unit_name, const kv_list_t *pairs, counts_t *counts, int use_color) {
@@ -637,6 +692,7 @@ int run_cli(int argc, char **argv) {
     counts_t counts = {0, 0, 0, 0};
 
     lint_plus_prefix(&pairs, &counts, use_color);
+    lint_protectproc_ptrace(&pairs, &counts, use_color);
 
     if (socket_unit_path) {
         kv_list_t socket_pairs;
