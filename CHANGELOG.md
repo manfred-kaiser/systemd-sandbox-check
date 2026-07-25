@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-25
+
 ### Added
 
 - `tests/run.sh`: a black-box test suite covering CLI basics, unit-file
@@ -118,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CapabilityBoundingSet, AmbientCapabilities, UMask)
 - `--dry-run` to print the `systemd-run` invocation without executing it
 
-[Unreleased]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/0.2.0...main
+[Unreleased]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/0.3.0...main
+[0.3.0]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/manfred-kaiser/systemd-sandbox-check/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/manfred-kaiser/systemd-sandbox-check/releases/tag/0.1.0
