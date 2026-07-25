@@ -8,6 +8,7 @@
 <p align="center">
   <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/blob/main/LICENSE"><img src="https://img.shields.io/github/license/manfred-kaiser/systemd-sandbox-check" alt="License"></a>
   <a href="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml"><img src="https://github.com/manfred-kaiser/systemd-sandbox-check/actions/workflows/c-build.yml/badge.svg" alt="Build status"></a>
+  <a href="https://github.com/manfred-kaiser"><img alt="Follow me on GitHub" src="https://img.shields.io/badge/-Follow%20me%20on%20GitHub-181717?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
 ---
@@ -152,9 +153,12 @@ sudo systemd-sandbox-check --unit examples/privatetmp-noexecpaths-bug.service
 ```
 
 `RootDirectory=`/`RootImage=` alone is sufficient to trigger this — a bare
-(non-`+`-prefixed) path in `NoExecPaths=`/`ExecPaths=`/etc. resolves
-against the host's original root instead of `RootDirectory=` once it's
-set, missing the chroot's own private `/tmp` mount entirely (see
+(non-`+`-prefixed) path in `NoExecPaths=`/`ExecPaths=`/etc. gets checked
+against the host's real filesystem, not against the chroot. Once
+`RootDirectory=` is set, that check silently applies to the host's `/tmp`
+instead of the private `/tmp` mount inside the chroot — the two no longer
+match, so the directive restricts a path the sandboxed process never
+actually uses, while its real `/tmp` stays fully executable (see
 `systemd.exec(5)` and [systemd/systemd#39935](https://github.com/systemd/systemd/issues/39935)).
 `RestrictNamespaces=` has no effect on it either way — an earlier version
 of this README claimed otherwise, based on a misreading of the tool's own
